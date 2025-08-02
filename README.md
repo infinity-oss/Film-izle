@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MiniFlix</title>
   <style>
-    /* Basit stil örneği */
     body {
       background:#141414;
       color:#eee;
@@ -72,6 +71,7 @@
       cursor:pointer;
       border-radius: 4px;
       font-weight: 600;
+      position: relative;
     }
     nav button.active {
       background:#e50914;
@@ -162,8 +162,7 @@
       align-items: center;
       z-index: 1000;
     }
-    #detail-popup .
-    {
+    #detail-popup .detail-content {
       background: #222;
       padding: 1rem;
       border-radius: 8px;
@@ -242,6 +241,20 @@
       cursor: pointer;
       color: #eee;
     }
+    /* Film Silme Butonu */
+    .delete-btn {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background-color: #e50914;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      padding: 2px 6px;
+      font-size: 0.8rem;
+      user-select:none;
+    }
   </style>
 </head>
 <body>
@@ -284,6 +297,17 @@
       <button id="btn-clear-favorites">Tüm Favorileri Temizle</button>
       <h4>Kullanıcılar</h4>
       <div id="admin-users-list"></div>
+
+      <h4>Film Ekle</h4>
+      <form id="add-movie-form">
+        <input type="text" id="movie-title" placeholder="Film Adı" required />
+        <input type="number" id="movie-year" placeholder="Yıl" required />
+        <input type="text" id="movie-category" placeholder="Kategori (anime, scifi, adventure, series, movies)" required />
+        <input type="text" id="movie-image" placeholder="Poster URL" required />
+        <textarea id="movie-description" placeholder="Açıklama" required></textarea>
+        <button type="submit">Ekle</button>
+      </form>
+      <hr />
     </div>
 
     <div id="detail-popup"></div>
@@ -291,10 +315,26 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
-    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
-    import { getFirestore, doc, setDoc, getDoc, collection, getDocs, updateDoc } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+    import {
+      getAuth,
+      signInWithEmailAndPassword,
+      createUserWithEmailAndPassword,
+      onAuthStateChanged,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
+    import {
+      getFirestore,
+      doc,
+      setDoc,
+      getDoc,
+      collection,
+      getDocs,
+      addDoc,
+      deleteDoc,
+      updateDoc
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
-    // Firebase config (senin bilgilerin)
+    // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyCqpQpBqiys2gSNJowq74BLf_XgxI18N2I",
       authDomain: "film-91c18.firebaseapp.com",
@@ -308,29 +348,8 @@
     const auth = getAuth(app);
     const db = getFirestore(app);
 
-    // Admin UID (kendi UID'ni buraya koy)
-    const adminUID = "KENDI_FIREBASE_UID_NI_BURAYA_YAZ"; // Örn: "abc123def456..."
-
-    // Film ve kategori verileri (örnek)
-    const categories = {
-      anime: [
-        { title: "Attack on Titan", year: 2013, description: "Devlerle savaşan insanlığın hikayesi.", image: "https://i.imgur.com/WP1q6hM.jpg" },
-        { title: "Naruto", year: 2002, description: "Bir ninja olma hayaliyle yola çıkan genç bir çocuk.", image: "https://i.imgur.com/5cK9Q0H.jpg" }
-      ],
-      scifi: [
-        { title: "Interstellar", year: 2014, description: "Uzayda insanlığın yeni yuvasını arama yolculuğu.", image: "https://i.imgur.com/KxPplvI.jpg" },
-        { title: "Blade Runner 2049", year: 2017, description: "Gelecekte bir dedektifin sırları ortaya çıkarması.", image: "https://i.imgur.com/jbzB7kS.jpg" }
-      ],
-      adventure: [
-        { title: "Indiana Jones", year: 1981, description: "Macera dolu bir arkeologun hikayesi.", image: "https://i.imgur.com/LTbKcMg.jpg" }
-      ],
-      series: [
-        { title: "Stranger Things", year: 2016, description: "Küçük bir kasabada garip olaylar ve arkadaşlık.", image: "https://i.imgur.com/IjS1Xa9.jpg" }
-      ],
-      movies: [
-        { title: "The Shawshank Redemption", year: 1994, description: "Umudun ve dostluğun hikayesi.", image: "https://i.imgur.com/SuW2ZlC.jpg" }
-      ]
-    };
+    // Admin UID
+    const adminUID = "u7jahcWw14NPXueX6MqSLuojBXW2"; // Kendi UID'nle değiştir!
 
     // Favori listesi
     let favorites = [];
@@ -348,8 +367,10 @@
     const detailPopup = document.getElementById('detail-popup');
     const adminPanel = document.getElementById('admin-panel');
     const adminUsersList = document.getElementById('admin-users-list');
+    const addMovieForm = document.getElementById('add-movie-form');
 
     let isRegistering = false;
+    let currentCategory = 'anime';
 
     // Kayıt linki tıklaması
     registerLink.addEventListener('click', e => {
@@ -369,7 +390,6 @@
       try {
         if (isRegistering) {
           const cred = await createUserWithEmailAndPassword(auth, email, password);
-          // Kullanıcıyı Firestore’a ekle
           await setDoc(doc(db, "users", cred.user.uid), {
             email: email,
             createdAt: new Date(),
@@ -411,16 +431,18 @@
         const snap = await getDoc(userDoc);
         if (snap.exists() && snap.data().isBanned) {
           alert("Hesabınız engellenmiştir. Lütfen yönetici ile iletişime geçin.");
-          auth.signOut();
+          await signOut(auth);
           return;
         }
 
         await loadFavorites();
+        await loadMovies(currentCategory);
       } else {
         loginScreen.style.display = 'flex';
         appContent.style.display = 'none';
         adminPanel.style.display = 'none';
         favorites = [];
+        movieRow.innerHTML = '';
       }
     });
 
@@ -441,7 +463,6 @@
       } else {
         favorites = [];
       }
-      loadCategory(document.querySelector('nav button.active').dataset.category);
     }
 
     // Favori kontrolü
@@ -481,32 +502,47 @@
         showDetail(movie);
       });
 
+      if (auth.currentUser && auth.currentUser.uid === adminUID) {
+        const delBtn = document.createElement('button');
+        delBtn.textContent = 'Sil';
+        delBtn.className = 'delete-btn';
+        delBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (confirm(`"${movie.title}" filmini silmek istediğine emin misin?`)) {
+            await deleteDoc(doc(db, "movies", movie.id));
+            alert("Film silindi.");
+            loadMovies(currentCategory);
+          }
+        });
+        card.appendChild(delBtn);
+      }
+
       return card;
     }
 
-    // Kategori yükleme
-    function loadCategory(category) {
+    // Filmleri Firestore’dan yükle
+    async function loadMovies(category) {
+      currentCategory = category;
       categoryTitle.textContent = category.charAt(0).toUpperCase() + category.slice(1);
       movieRow.innerHTML = '';
 
-      let moviesToShow = [];
+      const querySnapshot = await getDocs(collection(db, "movies"));
+      const movies = [];
+      querySnapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        data.id = docSnap.id;
+        if (category === 'favorites') {
+          if (favorites.includes(data.title)) movies.push(data);
+        } else if (data.category === category) {
+          movies.push(data);
+        }
+      });
 
-      if (category === 'favorites') {
-        moviesToShow = Object.values(categories).flat().filter(movie => favorites.includes(movie.title));
-      } else {
-        moviesToShow = categories[category] || [];
-      }
-
-      moviesToShow.forEach(movie => {
+      movies.forEach(movie => {
         const card = createMovieCard(movie);
         movieRow.appendChild(card);
       });
     }
 
     // Detay popup göster
-    function showDetail(movie) {
-      detailPopup.innerHTML = `
-        <div class="detail-content">
-          <button id="close-detail">×</button>
-          <img src="${movie.image}" alt="${movie.title}" />
-          <h2>${movie.title} (${movie
+    function showDetail(movie)
